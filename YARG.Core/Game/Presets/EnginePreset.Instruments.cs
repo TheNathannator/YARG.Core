@@ -64,7 +64,8 @@ namespace YARG.Core.Game
                 };
             }
 
-            public GuitarEngineParameters Create(float[] starMultiplierThresholds, bool isBass)
+            public GuitarEngineParameters Create(float[] starMultiplierThresholds,
+                double sustainDropLeniency, bool isBass)
             {
                 var hitWindow = HitWindow.Create();
                 return new GuitarEngineParameters(
@@ -75,6 +76,7 @@ namespace YARG.Core.Game
                     StrumLeniency,
                     StrumLeniencySmall,
                     DEFAULT_WHAMMY_BUFFER,
+                    sustainDropLeniency,
                     InfiniteFrontEnd,
                     AntiGhosting);
             }

@@ -15,10 +15,14 @@ namespace YARG.Core.Engine.Guitar
             public uint BaseTick;
             public double BaseScore;
 
-            public ActiveSustain(GuitarNote note)
+            public EngineTimer DropLeniencyTimer;
+
+            public ActiveSustain(GuitarNote note, double dropLeniency)
             {
                 Note = note;
                 BaseTick = note.Tick;
+
+                DropLeniencyTimer = new(dropLeniency);
             }
         }
 
@@ -165,14 +169,14 @@ namespace YARG.Core.Engine.Guitar
                         continue;
                     }
 
-                    var sustain = new ActiveSustain(chordNote);
+                    var sustain = new ActiveSustain(chordNote, EngineParameters.SustainDropLeniency);
                     ActiveSustains.Add(sustain);
                     OnSustainStart?.Invoke(chordNote);
                 }
             }
             else if (note.IsSustain)
             {
-                var sustain = new ActiveSustain(note);
+                var sustain = new ActiveSustain(note, EngineParameters.SustainDropLeniency);
                 ActiveSustains.Add(sustain);
                 OnSustainStart?.Invoke(note);
             }
@@ -337,8 +341,13 @@ namespace YARG.Core.Engine.Guitar
                 // Provides leniency for sustains with no gap (and just in general)
                 bool sustainEnded = (int) (note.TickEnd - State.CurrentTick) <= SustainBurstThreshold;
                 uint sustainTick = sustainEnded ? note.TickEnd : State.CurrentTick;
-                bool dropped = !sustainEnded && !CanNoteBeHit(note);
 
+                if (!sustainEnded && !CanNoteBeHit(note))
+                    sustain.DropLeniencyTimer.Start(State.CurrentTime);
+                else
+                    sustain.DropLeniencyTimer.Reset();
+
+                bool dropped = sustain.DropLeniencyTimer.IsExpired(State.CurrentTime);
                 if (dropped || sustainEnded)
                 {
                     double finalScore = CalculateSustainPoints(sustain, sustainTick);
