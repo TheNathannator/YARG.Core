@@ -130,7 +130,7 @@ namespace YARG.Core.Chart
                 beats.Add(beatline);
             }
 
-            return new((uint) _moonSong.resolution, tempos, timeSigs, beats);
+            return new(_moonSong.resolution, tempos, timeSigs, beats);
         }
 
         private InstrumentDifficulty<TNote> LoadDifficulty<TNote>(Instrument instrument, Difficulty difficulty,
@@ -388,7 +388,7 @@ namespace YARG.Core.Chart
                     if (previousNote is null)
                     {
                         // This is the first note in the chart, check by distance
-                        float tickThreshold = song.resolution / 3; // 1/12th note
+                        float tickThreshold = song.resolution / 3f; // 1/12th note
                         return Math.Abs((int) note.tick - endTick) < tickThreshold;
                     }
                     else if (note.tick >= endTick && previousNote.tick < endTick)

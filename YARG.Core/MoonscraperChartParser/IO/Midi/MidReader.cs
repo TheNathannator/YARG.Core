@@ -102,7 +102,7 @@ namespace MoonscraperChartEditor.Song.IO
 
             var song = new MoonSong()
             {
-                resolution = ticks.TicksPerQuarterNote
+                resolution = (uint) ticks.TicksPerQuarterNote
             };
 
             // Apply settings
@@ -178,7 +178,7 @@ namespace MoonscraperChartEditor.Song.IO
             if (settings.SustainCutoffThreshold < 0)
             {
                 // Default to 1/12th step + 1
-                settings.SustainCutoffThreshold = (long) (song.resolution / 3) + 1;
+                settings.SustainCutoffThreshold = (long) (song.resolution / 3f) + 1;
             }
             else
             {

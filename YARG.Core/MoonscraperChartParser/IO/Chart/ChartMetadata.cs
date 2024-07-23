@@ -87,7 +87,7 @@ namespace MoonscraperChartEditor.Song.IO
                     int resolution = ParseInteger(value);
                     if (resolution < 1)
                         throw new InvalidDataException($"Invalid .chart resolution {resolution}! Must be at least 1\nLine text: {line.ToString()}");
-                    song.resolution = resolution;
+                    song.resolution = (uint) resolution;
                 }
             }
         }

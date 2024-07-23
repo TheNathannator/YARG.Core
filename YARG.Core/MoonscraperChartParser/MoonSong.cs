@@ -21,11 +21,11 @@ namespace MoonscraperChartEditor.Song
             set => metaData.name = value;
         }
 
-        public float resolution;
+        public uint resolution;
         public float hopoThreshold;
-        public float offset = 0;
+        public double offset = 0;
 
-        public float? manualLength = null;
+        public double? manualLength = null;
 
         // Charts
         private readonly MoonChart[] charts;
@@ -107,7 +107,7 @@ namespace MoonscraperChartEditor.Song
         /// <param name="time">The time (in seconds) to convert.</param>
         /// <param name="resolution">Ticks per beat, usually provided from the resolution song of a Song class.</param>
         /// <returns>Returns the calculated tick position.</returns>
-        public uint TimeToTick(double time, float resolution)
+        public uint TimeToTick(double time, uint resolution)
         {
             if (time < 0)
                 time = 0;
@@ -171,7 +171,7 @@ namespace MoonscraperChartEditor.Song
         /// <param name="position">Tick position.</param>
         /// <param name="resolution">Ticks per beat, usually provided from the resolution song of a Song class.</param>
         /// <returns>Returns the time in seconds.</returns>
-        public double TickToTime(uint position, float resolution)
+        public double TickToTime(uint position, uint resolution)
         {
             int previousBPMPos = MoonObjectHelper.FindClosestPosition(position, bpms);
             if (bpms[previousBPMPos].tick > position)
@@ -275,12 +275,12 @@ namespace MoonscraperChartEditor.Song
             }
         }
 
-        public double LiveTickToTime(uint position, float resolution)
+        public double LiveTickToTime(uint position, uint resolution)
         {
             return LiveTickToTime(position, resolution, bpms[0], bpms);
         }
 
-        public static double LiveTickToTime(uint position, float resolution, MoonTempo initialBpm, List<MoonTempo> synctrack)
+        public static double LiveTickToTime(uint position, uint resolution, MoonTempo initialBpm, List<MoonTempo> synctrack)
         {
             double time = 0;
             var prevBPM = initialBpm;
@@ -308,9 +308,9 @@ namespace MoonscraperChartEditor.Song
             return time;
         }
 
-        public float ResolutionScaleRatio(float targetResoltion)
+        public float ResolutionScaleRatio(uint targetResoltion)
         {
-            return targetResoltion / resolution;
+            return (float) targetResoltion / resolution;
         }
 
         public static MoonChart.GameMode InstrumentToChartGameMode(MoonInstrument instrument)
