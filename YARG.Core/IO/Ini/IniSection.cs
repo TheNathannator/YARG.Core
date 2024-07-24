@@ -9,6 +9,10 @@ namespace YARG.Core.IO.Ini
     {
         private readonly Dictionary<string, List<IniModifier>> modifiers;
 
+#if DEBUG
+        internal Dictionary<string, IniModifierCreator>? knownModifiers;
+#endif
+
         public int Count => modifiers.Count;
 
         public IniSection() { modifiers = new(); }
@@ -36,7 +40,7 @@ namespace YARG.Core.IO.Ini
         public bool TryGet(in string key, out SortString str, in SortString defaultStr)
         {
 #if DEBUG
-            SongIniHandler.ThrowIfNot<SortString>(key);
+            SongIniHandler.ThrowIfNot<SortString>(key, knownModifiers);
 #endif
             if (modifiers.TryGetValue(key, out var results))
             {
@@ -59,7 +63,7 @@ namespace YARG.Core.IO.Ini
         public bool TryGet(in string key, out SortString str, in string defaultStr)
         {
 #if DEBUG
-            SongIniHandler.ThrowIfNot<SortString>(key);
+            SongIniHandler.ThrowIfNot<SortString>(key, knownModifiers);
 #endif
             if (modifiers.TryGetValue(key, out var results))
             {
@@ -82,7 +86,7 @@ namespace YARG.Core.IO.Ini
         public bool TryGet(in string key, out string str)
         {
 #if DEBUG
-            SongIniHandler.ThrowIfNot<string>(key);
+            SongIniHandler.ThrowIfNot<string>(key, knownModifiers);
 #endif
             if (modifiers.TryGetValue(key, out var results))
             {
@@ -96,7 +100,7 @@ namespace YARG.Core.IO.Ini
         public bool TryGet(in string key, out long val1, out long val2)
         {
 #if DEBUG
-            SongIniHandler.ThrowIfNot<long[]>(key);
+            SongIniHandler.ThrowIfNot<long[]>(key, knownModifiers);
 #endif
             if (modifiers.TryGetValue(key, out var results))
             {
@@ -117,7 +121,7 @@ namespace YARG.Core.IO.Ini
             where T : unmanaged
         {
 #if DEBUG
-            SongIniHandler.ThrowIfNot<T>(key);
+            SongIniHandler.ThrowIfNot<T>(key, knownModifiers);
 #endif
             if (modifiers.TryGetValue(key, out var results))
             {

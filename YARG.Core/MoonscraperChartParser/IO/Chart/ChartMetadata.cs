@@ -27,7 +27,6 @@ namespace MoonscraperChartEditor.Song.IO
 
         public const string RESOLUTION_KEY = "Resolution";
 
-        public static readonly Dictionary<string, Dictionary<string, IniModifierCreator>> DotChartDictionary;
         public static readonly Dictionary<string, IniModifierCreator> SongSectionModifiers;
 
         static ChartMetadata()
@@ -49,11 +48,6 @@ namespace MoonscraperChartEditor.Song.IO
 
                 { RESOLUTION_KEY,     new(RESOLUTION_KEY, ModifierType.UInt32) },
             };
-
-            DotChartDictionary = new()
-            {
-                { "[Song]", SongSectionModifiers },
-            };
         }
 
         public static void ReadMetadataSection<TChar>(MoonSong song, ref YARGTextContainer<TChar> chartText)
@@ -61,6 +55,9 @@ namespace MoonscraperChartEditor.Song.IO
         {
             var modifiers = YARGChartFileReader.ExtractModifiers(ref chartText, SongSectionModifiers);
             var metadata = new IniSection(modifiers);
+#if DEBUG
+            metadata.knownModifiers = SongSectionModifiers;
+#endif
 
             // Resolution = 192
             if (!metadata.TryGet(RESOLUTION_KEY, out uint resolution))

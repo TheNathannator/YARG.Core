@@ -21,21 +21,22 @@ namespace YARG.Core.IO.Ini
         public static readonly Dictionary<string, IniModifierCreator> SONG_INI_MODIFIERS;
 
 #if DEBUG
-        private static readonly Dictionary<string, ModifierType> _validations;
-        public static void ThrowIfNot<T>(string key)
+        private static readonly Dictionary<Type, ModifierType> _validations;
+        public static void ThrowIfNot<T>(string key, Dictionary<string, IniModifierCreator>? knownModifiers)
         {
-            if (!SONG_INI_MODIFIERS.TryGetValue(key, out var mod))
+            knownModifiers ??= SONG_INI_MODIFIERS;
+            if (!knownModifiers.TryGetValue(key, out var mod))
             {
                 throw new ArgumentException($"Dev: {key} is not a valid modifier!");
             }
 
-            var typename = typeof(T).Name;
-            var type = _validations[typename];
-            if (type != mod.Type
-            && (type == ModifierType.SortString) != (mod.Type == ModifierType.SortString_Chart)
-            && (type == ModifierType.String) != (mod.Type == ModifierType.String_Chart))
+            var type = typeof(T);
+            var modifierType = _validations[type];
+            if (modifierType != mod.Type &&
+                (modifierType == ModifierType.SortString) != (mod.Type == ModifierType.SortString_Chart) &&
+                (modifierType == ModifierType.String) != (mod.Type == ModifierType.String_Chart))
             {
-                throw new ArgumentException($"Dev: Modifier {key} is not of type {typename}");
+                throw new ArgumentException($"Dev: Modifier {key} is not of type {type}");
             }
         }
 #endif
@@ -183,18 +184,18 @@ namespace YARG.Core.IO.Ini
 #if DEBUG
             _validations = new()
             {
-                { nameof(SortString), ModifierType.SortString },
-                { typeof(string).Name, ModifierType.String },
-                { typeof(ulong).Name, ModifierType.UInt64 },
-                { typeof(long).Name, ModifierType.Int64 },
-                { typeof(uint).Name, ModifierType.UInt32 },
-                { typeof(int).Name, ModifierType.Int32 },
-                { typeof(ushort).Name, ModifierType.UInt16 },
-                { typeof(short).Name, ModifierType.Int16 },
-                { typeof(bool).Name, ModifierType.Bool },
-                { typeof(float).Name, ModifierType.Float },
-                { typeof(double).Name, ModifierType.Double },
-                { typeof(long[]).Name, ModifierType.Int64Array },
+                { typeof(SortString), ModifierType.SortString },
+                { typeof(string), ModifierType.String },
+                { typeof(ulong), ModifierType.UInt64 },
+                { typeof(long), ModifierType.Int64 },
+                { typeof(uint), ModifierType.UInt32 },
+                { typeof(int), ModifierType.Int32 },
+                { typeof(ushort), ModifierType.UInt16 },
+                { typeof(short), ModifierType.Int16 },
+                { typeof(bool), ModifierType.Bool },
+                { typeof(float), ModifierType.Float },
+                { typeof(double), ModifierType.Double },
+                { typeof(long[]), ModifierType.Int64Array },
             };
 #endif
         }
