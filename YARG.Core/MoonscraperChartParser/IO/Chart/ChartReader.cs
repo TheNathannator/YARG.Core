@@ -5,25 +5,18 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Text.RegularExpressions;
-using YARG.Core;
 using YARG.Core.Chart;
-using YARG.Core.Extensions;
+using YARG.Core.IO;
+using YARG.Core.IO.Disposables;
 using YARG.Core.Logging;
 using YARG.Core.Parsing;
-using YARG.Core.Song;
 using YARG.Core.Utility;
 
 namespace MoonscraperChartEditor.Song.IO
 {
-    using TrimSplitter = SpanSplitter<char, TrimSplitProcessor>;
-
     internal static partial class ChartReader
     {
         private struct Anchor
@@ -83,9 +76,8 @@ namespace MoonscraperChartEditor.Song.IO
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static ReadOnlySpan<char>
-            GetNextWord(this ReadOnlySpan<char> buffer, out ReadOnlySpan<char> remaining) =>
-            buffer.SplitOnceTrimmed(' ', out remaining);
+        private static ReadOnlySpan<char> GetNextWord(this ReadOnlySpan<char> buffer, out ReadOnlySpan<char> remaining)
+            => buffer.SplitOnceTrimmed(' ', out remaining);
 
         #endregion
 
@@ -103,97 +95,72 @@ namespace MoonscraperChartEditor.Song.IO
 
         public static MoonSong ReadFromFile(ref ParseSettings settings, string filepath)
         {
-            try
+            var fileInfo = new FileInfo(filepath);
+            if (!fileInfo.Exists)
+                throw new FileNotFoundException("The given file path does not exist", filepath);
+            if (fileInfo.Extension != ".chart")
+                throw new InvalidOperationException($"Not a .chart file: {filepath}");
+
+            using var bytes = MemoryMappedArray.Load(fileInfo);
+            if (YARGTextReader.IsUTF8(bytes, out var byteContainer))
+                return ReadFromText(ref settings, ref byteContainer);
+
+            using var chars = YARGTextReader.ConvertToUTF16(bytes, out var charContainer);
+            if (chars != null)
+                return ReadFromText(ref settings, ref charContainer);
+
+            using var ints = YARGTextReader.ConvertToUTF32(bytes, out var intContainer);
+            return ReadFromText(ref settings, ref intContainer);
+        }
+
+        public static unsafe MoonSong ReadFromText(ref ParseSettings settings, ReadOnlySpan<char> chartText)
+        {
+            fixed (char* ptr = chartText)
             {
-                if (!File.Exists(filepath)) throw new Exception("File does not exist");
-
-                string extension = Path.GetExtension(filepath);
-
-                if (extension != ".chart") throw new Exception("Bad file type");
-
-                string text = File.ReadAllText(filepath);
-                return ReadFromText(ref settings, text);
-            }
-            catch (Exception e)
-            {
-                throw new Exception("Could not open file!", e);
+                var container = new YARGTextContainer<char>(ptr, ptr + chartText.Length, Encoding.Unicode);
+                return ReadFromText(ref settings, ref container);
             }
         }
 
-        public static MoonSong ReadFromText(ref ParseSettings settings, ReadOnlySpan<char> chartText)
+        public static MoonSong ReadFromText<TChar>(ref ParseSettings settings, ref YARGTextContainer<TChar> chartText)
+            where TChar : unmanaged, IEquatable<TChar>, IConvertible
         {
             var song = new MoonSong();
 
-            while (!chartText.IsEmpty)
+            static void ExpectSection(ref YARGTextContainer<TChar> chartText, string section, int sectionIndex)
             {
-                // Find section name
-                int nameIndex = chartText.IndexOf('[');
-                int nameEndIndex = chartText.IndexOf(']');
-                if (nameIndex < 0 || nameEndIndex < 0 || nameEndIndex < nameIndex) break;
+                if (!YARGChartFileReader.ValidateTrack(ref chartText, section))
+                    throw new InvalidDataException($"Invalid section ordering! Expected [{section}] to be section {sectionIndex + 1}");
+            }
 
-                nameIndex++; // Exclude starting bracket
-                var sectionName = chartText[nameIndex..nameEndIndex];
-                chartText = chartText[nameEndIndex..];
+            ExpectSection(ref chartText, YARGChartFileReader.HEADERTRACK, sectionIndex: 0);
+            ReadMetadataSection(ref chartText, song, ref settings);
 
-                // Find section body
-                int sectionIndex = chartText.IndexOf('{');
-                int sectionEndIndex = chartText.IndexOf('}');
-                if (sectionIndex < 0 || sectionEndIndex < 0 || sectionEndIndex < sectionIndex) break;
+            ExpectSection(ref chartText, YARGChartFileReader.SYNCTRACK, sectionIndex: 1);
+            ReadSyncSection(ref chartText, song);
 
-                sectionIndex++; // Exclude starting bracket
-                var sectionText = chartText[sectionIndex..sectionEndIndex];
-                chartText = chartText[sectionEndIndex..];
-
-                var splitter = sectionText.SplitTrimmed('\n');
-                SubmitChartData(ref settings, song, sectionName, splitter);
+            while (YARGChartFileReader.IsStartOfTrack(chartText))
+            {
+                if (YARGChartFileReader.ValidateTrack(ref chartText, YARGChartFileReader.EVENTTRACK))
+                {
+                    ReadEventsSection(ref chartText, song);
+                }
+                else if (YARGChartFileReader.ValidateInstrument(ref chartText, out var instrument, out var difficulty))
+                {
+                    ReadInstrumentSection(ref chartText, song, ref settings,
+                        instrument.ToMoonInstrument(), difficulty.ToMoonDifficulty());
+                }
             }
 
             return song;
         }
 
-        private static void SubmitChartData(ref ParseSettings settings, MoonSong song, ReadOnlySpan<char> sectionName,
-            TrimSplitter sectionLines)
+        private static void ReadMetadataSection<TChar>(ref YARGTextContainer<TChar> chartText, MoonSong song,
+            ref ParseSettings settings)
+            where TChar : unmanaged, IEquatable<TChar>, IConvertible
         {
-            if (sectionName.Equals(ChartIOHelper.SECTION_SONG, StringComparison.Ordinal))
-            {
-                YargLogger.LogTrace("Loading chart properties");
-                SubmitDataSong(song, ref settings, sectionLines);
-                return;
-            }
-            else if (sectionName.Equals(ChartIOHelper.SECTION_SYNC_TRACK, StringComparison.Ordinal))
-            {
-                YargLogger.LogTrace("Loading sync data");
-                SubmitDataSync(song, sectionLines);
-                return;
-            }
-            else if (sectionName.Equals(ChartIOHelper.SECTION_EVENTS, StringComparison.Ordinal))
-            {
-                YargLogger.LogTrace("Loading events data");
-                SubmitDataGlobals(song, sectionLines);
-                return;
-            }
-
-            // Determine what difficulty
-            foreach (var (diffName, difficulty) in ChartIOHelper.TrackNameToTrackDifficultyLookup)
-            {
-                if (!sectionName.StartsWith(diffName, StringComparison.Ordinal)) continue;
-
-                foreach (var (instrumentName, instrument) in ChartIOHelper.InstrumentStrToEnumLookup)
-                {
-                    if (!sectionName.EndsWith(instrumentName, StringComparison.Ordinal)) continue;
-
-                    YargLogger.LogFormatDebug("Loading data for {0} {1}", difficulty, instrument);
-                    LoadChart(ref settings, song, sectionLines, instrument, difficulty);
-                    break;
-                }
-
-                break;
-            }
-        }
-
-        private static void SubmitDataSong(MoonSong song, ref ParseSettings settings, TrimSplitter sectionLines)
-        {
-            ChartMetadata.ParseSongSection(song, sectionLines);
+            YargLogger.LogTrace("Loading .chart [Song] section");
+            ChartMetadata.ReadMetadataSection(song, ref chartText);
             ValidateAndApplySettings(song, ref settings);
         }
 
@@ -204,67 +171,59 @@ namespace MoonscraperChartEditor.Song.IO
 
             // Sustain cutoff threshold is not verified, sustains are not cut off by default in .chart
             // SP note is not verified, as it is only relevant for .mid
-            // Note snap threshold is not verified, as the parser doesn't use it
+            // Note snap threshold is not verified, as .chart doesn't use note snapping
 
             // Chord HOPO cancellation does not apply in .chart
             settings.ChordHopoCancellation = false;
         }
 
-        private static void SubmitDataSync(MoonSong song, TrimSplitter sectionLines)
+        private static void ReadSyncSection<TChar>(ref YARGTextContainer<TChar> chartText, MoonSong song)
+            where TChar : unmanaged, IEquatable<TChar>, IConvertible
         {
+            YargLogger.LogTrace("Loading .chart [SyncTrack] section");
+
             var anchorData = new List<Anchor>();
             uint prevTick = 0;
 
-            foreach (var _line in sectionLines)
+            var chartEvent = new DotChartEvent();
+            while (YARGChartFileReader.TryParseEvent(ref chartText, ref chartEvent))
             {
-                var line = _line.Trim();
-                if (line.IsEmpty) continue;
-
                 try
                 {
-                    // Split on the equals sign
-                    var tickText = line.SplitOnceTrimmed('=', out var remaining);
-
-                    // Get tick
-                    uint tick = (uint) FastInt32Parse(tickText);
-
-                    if (prevTick > tick) throw new Exception("Tick value not in ascending order");
+                    uint tick = (uint) chartEvent.Position;
+                    if (prevTick > tick)
+                        throw new Exception("Tick value not in ascending order");
                     prevTick = tick;
 
-                    // Get event type
-                    var typeCodeText = remaining.GetNextWord(out remaining);
-                    char typeCode = typeCodeText[0];
-                    switch (typeCode)
+                    switch (chartEvent.Type)
                     {
-                        case 'T' when typeCodeText[1] == 'S':
+                        case ChartEventType.Time_Sig:
                         {
-                            // Get numerator
-                            var numeratorText = remaining.GetNextWord(out remaining);
-                            uint numerator = (uint) FastInt32Parse(numeratorText);
+                            uint numerator = YARGTextReader.ExtractUInt32AndWhitespace(ref chartText);
 
-                            // Get denominator
-                            var denominatorText = remaining.GetNextWord(out remaining);
-                            uint denominator = denominatorText.IsEmpty ? 2 : (uint) FastInt32Parse(denominatorText);
-                            song.timeSignatures.Add(new MoonTimeSignature(tick, numerator,
-                                (uint) Math.Pow(2, denominator)));
+                            // Denominator is optional, and defaults to 2 (becomes 4)
+                            if (!YARGTextReader.TryExtractUInt32(ref chartText, out uint denominator))
+                                denominator = 2;
+                            else
+                                YARGTextReader.SkipWhitespace(ref chartText);
+
+                            // Denominator is stored as a power of 2, apply it here
+                            denominator = (uint) Math.Pow(2, denominator);
+
+                            song.timeSignatures.Add(new MoonTimeSignature(tick, numerator, denominator));
                             break;
                         }
 
-                        case 'B':
+                        case ChartEventType.Bpm:
                         {
-                            // Get tempo value
-                            var tempoText = remaining.GetNextWord(out remaining);
-                            uint tempo = (uint) FastInt32Parse(tempoText);
-
+                            ulong tempo = YARGTextReader.ExtractUInt64AndWhitespace(ref chartText);
                             song.bpms.Add(new MoonTempo(tick, tempo / 1000f));
                             break;
                         }
 
-                        case 'A':
+                        case ChartEventType.Anchor:
                         {
-                            // Get anchor time
-                            var anchorText = remaining.GetNextWord(out remaining);
-                            ulong anchorTime = FastUint64Parse(anchorText);
+                            ulong anchorTime = YARGTextReader.ExtractUInt64AndWhitespace(ref chartText);
 
                             var anchor = new Anchor()
                             {
@@ -276,13 +235,14 @@ namespace MoonscraperChartEditor.Song.IO
                         }
 
                         default:
-                            YargLogger.LogFormatWarning("Unrecognized type code '{0}'!", typeCode);
+                            YargLogger.LogFormatWarning("Unhandled .chart event type {0} in [SyncTrack] section!", chartEvent.Type);
                             break;
                     }
                 }
                 catch (Exception e)
                 {
-                    YargLogger.LogException(e, $"Error parsing .chart line '{line.ToString()}'!");
+                    YargLogger.LogException(e, "Error while parsing .chart [SyncTrack] section!");
+                    throw;
                 }
             }
 
@@ -303,61 +263,61 @@ namespace MoonscraperChartEditor.Song.IO
             song.UpdateBPMTimeValues();
         }
 
-        private static void SubmitDataGlobals(MoonSong song, TrimSplitter sectionLines)
+        private static void ReadEventsSection<TChar>(ref YARGTextContainer<TChar> chartText, MoonSong song)
+            where TChar : unmanaged, IEquatable<TChar>, IConvertible
         {
-            uint prevTick = 0;
-            foreach (var _line in sectionLines)
-            {
-                var line = _line.Trim();
-                if (line.IsEmpty) continue;
+            YargLogger.LogTrace("Loading .chart [Events] section");
 
+            uint prevTick = 0;
+            var chartEvent = new DotChartEvent();
+            while (YARGChartFileReader.TryParseEvent(ref chartText, ref chartEvent))
+            {
                 try
                 {
-                    // Split on the equals sign
-                    var tickText = line.SplitOnceTrimmed('=', out var remaining);
-
-                    // Get tick
-                    uint tick = (uint) FastInt32Parse(tickText);
-
-                    if (prevTick > tick) throw new Exception("Tick value not in ascending order");
+                    uint tick = (uint) chartEvent.Position;
+                    if (prevTick > tick)
+                        throw new Exception("Tick value not in ascending order");
                     prevTick = tick;
 
                     // Get event type
-                    var typeCodeText = remaining.GetNextWord(out remaining);
-                    if (typeCodeText[0] == 'E')
+                    switch (chartEvent.Type)
                     {
-                        // Get event text
-                        var eventText = TextEvents.NormalizeTextEvent(remaining.TrimOnce('"'));
+                        case ChartEventType.Text:
+                        {
+                            string eventText = YARGTextReader.ExtractText(ref chartText, isChartFile: true);
+                            var normalizedText = TextEvents.NormalizeTextEvent(eventText);
 
-                        // Check for section events
-                        if (TextEvents.TryParseSectionEvent(eventText, out var sectionName))
-                        {
-                            song.sections.Add(new MoonText(sectionName.ToString(), tick));
+                            // Put section events into their own list for ease of access
+                            if (TextEvents.TryParseSectionEvent(normalizedText, out var sectionName))
+                            {
+                                song.sections.Add(new MoonText(sectionName.ToString(), tick));
+                            }
+                            else
+                            {
+                                song.events.Add(new MoonText(normalizedText.ToString(), tick));
+                            }
+                            break;
                         }
-                        else
-                        {
-                            song.events.Add(new MoonText(eventText.ToString(), tick));
-                        }
-                    }
-                    else
-                    {
-                        YargLogger.LogFormatWarning("Unrecognized type code '{0}'!", typeCodeText[0]);
+
+                        default:
+                            YargLogger.LogFormatWarning("Unhandled .chart event type {0} in [Events] section!", chartEvent.Type);
+                            break;
                     }
                 }
                 catch (Exception e)
                 {
-                    YargLogger.LogException(e, $"Error parsing .chart line '{line.ToString()}'!");
+                    YargLogger.LogException(e, "Error while parsing .chart [Events] section!");
+                    throw;
                 }
             }
         }
 
-        #region Utility
-
-        #endregion
-
-        private static void LoadChart(ref ParseSettings settings, MoonSong song, TrimSplitter sectionLines,
-            MoonSong.MoonInstrument instrument, MoonSong.Difficulty difficulty)
+        private static void ReadInstrumentSection<TChar>(ref YARGTextContainer<TChar> chartText, MoonSong song,
+            ref ParseSettings settings, MoonSong.MoonInstrument instrument, MoonSong.Difficulty difficulty)
+            where TChar : unmanaged, IEquatable<TChar>, IConvertible
         {
+            YargLogger.LogFormatTrace("Loading .chart section for {0} {1}", difficulty, instrument);
+
             var chart = song.GetChart(instrument, difficulty);
             var gameMode = chart.gameMode;
 
@@ -376,108 +336,85 @@ namespace MoonscraperChartEditor.Song.IO
             var noteProcessDict = GetNoteProcessDict(gameMode);
             var specialPhraseProcessDict = GetSpecialPhraseProcessDict(gameMode);
 
-            try
+            uint prevTick = 0;
+            var chartEvent = new DotChartEvent();
+            while (YARGChartFileReader.TryParseEvent(ref chartText, ref chartEvent))
             {
-                uint prevTick = 0;
-                // Load notes, collect flags
-                foreach (var line in sectionLines)
+                try
                 {
-                    try
+                    uint tick = (uint) chartEvent.Position;
+                    if (prevTick > tick)
+                        throw new Exception("Tick value not in ascending order");
+                    prevTick = tick;
+
+                    switch (chartEvent.Type)
                     {
-                        // Split on the equals sign
-                        var tickText = line.SplitOnceTrimmed('=', out var remaining);
-
-                        // Get tick
-                        uint tick = (uint) FastInt32Parse(tickText);
-
-                        if (prevTick > tick) throw new Exception("Tick value not in ascending order");
-                        prevTick = tick;
-
-                        // Get event type
-                        char typeCode = remaining.GetNextWord(out remaining)[0];
-                        switch (
-                            typeCode) // Note this will need to be changed if keys are ever greater than 1 character long
+                        case ChartEventType.Note:
                         {
-                            case 'N':
+                            int noteType = YARGTextReader.ExtractInt32AndWhitespace(ref chartText);
+                            uint noteLength = YARGTextReader.ExtractUInt32AndWhitespace(ref chartText);
+
+                            if (noteProcessDict.TryGetValue(noteType, out var processFn))
                             {
-                                // Get note data
-                                var noteTypeText = remaining.GetNextWord(out remaining);
-                                int noteType = FastInt32Parse(noteTypeText);
-
-                                var noteLengthText = remaining.GetNextWord(out remaining);
-                                uint noteLength = (uint) FastInt32Parse(noteLengthText);
-
-                                // Process the note
-                                if (noteProcessDict.TryGetValue(noteType, out var processFn))
+                                var noteEvent = new NoteEvent()
                                 {
-                                    var noteEvent = new NoteEvent()
-                                    {
-                                        tick = tick,
-                                        noteNumber = noteType,
-                                        length = noteLength
-                                    };
-                                    processParams.noteEvent = noteEvent;
-                                    processFn(ref processParams);
-                                }
-
-                                break;
+                                    tick = tick,
+                                    noteNumber = noteType,
+                                    length = noteLength
+                                };
+                                processParams.noteEvent = noteEvent;
+                                processFn(ref processParams);
                             }
 
-                            case 'S':
-                            {
-                                // Get phrase data
-                                var phraseTypeText = remaining.GetNextWord(out remaining);
-                                int phraseType = FastInt32Parse(phraseTypeText);
-
-                                var phraseLengthText = remaining.GetNextWord(out remaining);
-                                uint phraseLength = (uint) FastInt32Parse(phraseLengthText);
-
-                                if (specialPhraseProcessDict.TryGetValue(phraseType, out var processFn))
-                                {
-                                    var noteEvent = new NoteEvent()
-                                    {
-                                        tick = tick,
-                                        noteNumber = phraseType,
-                                        length = phraseLength
-                                    };
-                                    processParams.noteEvent = noteEvent;
-                                    processFn(ref processParams);
-                                }
-
-                                break;
-                            }
-                            case 'E':
-                            {
-                                var eventText = TextEvents.NormalizeTextEvent(remaining.TrimOnce('"'));
-                                chart.events.Add(new MoonText(eventText.ToString(), tick));
-                                break;
-                            }
-
-                            default:
-                                YargLogger.LogFormatWarning("Unrecognized type code '{0}'!", typeCode);
-                                break;
+                            break;
                         }
-                    }
-                    catch (Exception e)
-                    {
-                        YargLogger.LogException(e, $"Error parsing .chart line '{line.ToString()}'!");
+
+                        case ChartEventType.Special:
+                        {
+                            int phraseType = YARGTextReader.ExtractInt32AndWhitespace(ref chartText);
+                            uint phraseLength = YARGTextReader.ExtractUInt32AndWhitespace(ref chartText);
+
+                            if (specialPhraseProcessDict.TryGetValue(phraseType, out var processFn))
+                            {
+                                var noteEvent = new NoteEvent()
+                                {
+                                    tick = tick,
+                                    noteNumber = phraseType,
+                                    length = phraseLength
+                                };
+                                processParams.noteEvent = noteEvent;
+                                processFn(ref processParams);
+                            }
+
+                            break;
+                        }
+                        case ChartEventType.Text:
+                        {
+                            string eventText = YARGTextReader.ExtractText(ref chartText, isChartFile: true);
+                            eventText = TextEvents.NormalizeTextEvent(eventText).ToString();
+                            chart.events.Add(new MoonText(eventText.ToString(), tick));
+                            break;
+                        }
+
+                        default:
+                            YargLogger.LogFormatWarning("Unhandled .chart event type {0} in section for {1} {2}!", chartEvent.Type, difficulty, instrument);
+                            break;
                     }
                 }
-
-                foreach (var fn in postNotesAddedProcessList)
+                catch (Exception e)
                 {
-                    fn(ref processParams);
+                    YargLogger.LogException(e, $"Error while parsing .chart section for {difficulty} {instrument}!");
+                    throw;
                 }
+            }
 
-                chart.notes.TrimExcess();
-                settings = processParams.settings;
-            }
-            catch (Exception e)
+            foreach (var fn in postNotesAddedProcessList)
             {
-                // Bad load, most likely a parsing error
-                YargLogger.LogException(e, $"Error parsing .chart section for {difficulty} {instrument}!");
-                chart.Clear();
+                fn(ref processParams);
             }
+
+            chart.notes.TrimExcess();
+            settings = processParams.settings;
         }
 
         private static void ProcessNoteOnEventAsNote(ref NoteProcessParams noteProcessParams, int ingameFret,
