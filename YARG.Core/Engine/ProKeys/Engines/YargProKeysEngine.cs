@@ -60,7 +60,7 @@ namespace YARG.Core.Engine.ProKeys.Engines
                     // The note must be hit to disable the timer
                     if (FatFingerNote!.WasHit)
                     {
-                        YargLogger.LogDebug("Disabling fat finger timer as the note has been hit.");
+                        YargLogger.LogTrace("Disabling fat finger timer as the note has been hit.");
                         FatFingerTimer.Disable();
                         FatFingerKey = null;
                         FatFingerNote = null;
