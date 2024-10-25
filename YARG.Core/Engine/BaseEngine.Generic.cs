@@ -555,12 +555,15 @@ namespace YARG.Core.Engine
             // Whereas disabling it before could mean there are some ticks which should have been whammied but weren't.
             if (StarPowerWhammyTimer.IsActive && StarPowerWhammyTimer.IsExpired(CurrentTime))
             {
+                YargLogger.LogFormatTrace("Ended whammy at {0} (tick {1})", CurrentTime, CurrentTick);
                 StarPowerWhammyTimer.Disable();
             }
         }
 
         protected virtual void StartSustain(TNoteType note)
         {
+            // Ensure whammy gain is anchored to
+            // when the sustain was hit at the earliest
             if (ActiveSustains.Count == 0)
             {
                 LastStarPowerWhammyTick = CurrentTick;
@@ -582,6 +585,19 @@ namespace YARG.Core.Engine
             ActiveSustains.RemoveAt(sustainIndex);
 
             OnSustainEnd?.Invoke(sustain.Note, CurrentTime, sustain.HasFinishedScoring);
+        }
+
+        protected void StartWhammy(double time)
+        {
+            // Ensure whammy is calculated relative to when whammying started,
+            // as opposed to relative to when the sustain started
+            if (!StarPowerWhammyTimer.IsActive)
+            {
+                LastStarPowerWhammyTick = SyncTrack.TimeToTick(time);
+                YargLogger.LogFormatTrace("Started whammy at {0} (tick {1})", time, LastStarPowerWhammyTick);
+            }
+
+            StarPowerWhammyTimer.Start(time);
         }
 
         protected void UpdateStars()

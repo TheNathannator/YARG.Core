@@ -22,7 +22,7 @@ namespace YARG.Core.Engine.ProKeys.Engines
             }
             else if (action is ProKeysAction.TouchEffects)
             {
-                StarPowerWhammyTimer.Start(gameInput.Time);
+                StartWhammy(gameInput.Time);
             }
             else
             {
