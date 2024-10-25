@@ -693,11 +693,6 @@ namespace YARG.Core.Engine
 
         }
 
-        protected virtual void UpdateProgressValues(uint tick)
-        {
-
-        }
-
         public abstract void AllowStarPower(bool isAllowed);
 
         /// <summary>
